@@ -196,8 +196,8 @@ def inner_metrics(response):
         f_code=f_code,
         path=request.path,
         http_status=response.status_code,
-        code=str(code),
-        method_code=method_code
+        code=code or '',
+        method_code=method_code or ''
     ).observe((datetime.now() - g.__request_time__).total_seconds() * 1000)
 
     return response

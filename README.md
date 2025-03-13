@@ -20,6 +20,10 @@
 
 ## 安装使用
 
+```bash
+pip install channel_exporter
+```
+
 ### 环境要求
 
 - Python 2.7+
@@ -86,8 +90,8 @@ if __name__ == "__main__":
 
 - `appid`: 应用ID（syscode前4位）
 - `application`: 系统编码
-- `partner`: 合作商编号
-- `action_code`: 路径编号
+- `partner`: 合作商（域名）编号
+- `action_code`: 动作（路径）编号
 - `http_status`: HTTP 状态码
 - `code`: 业务响应码（由被调用方定义，-1表示未找到业务响应码）
 
@@ -99,6 +103,6 @@ if __name__ == "__main__":
 
 - `appid`: 应用ID（syscode前4位）
 - `application`: 完整syscode
-- `f_code`: 请求方系统编码（取自 headers["User-Agent"]）
+- `f_code`: 空值
 - `topic`: 消息主题
 - `code`: 处理结果（0成功/1失败）
