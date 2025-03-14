@@ -22,7 +22,7 @@ def __init__(
         耗时分位分布。
 
     @param partner_http_metrics_buckets:
-        合作伙伴 HTTP 调用指标直方图桶配置，单位毫秒。默认值同参数
+        合作商 HTTP 调用指标直方图桶配置，单位毫秒。默认值同参数
         `inner_metrics_buckets`，用于统计第三方接口调用耗时分位分布。
 
     @param consumer_metrics_buckets:

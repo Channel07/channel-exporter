@@ -11,12 +11,12 @@
 
 - ✅ 内置三大监控维度
     - Web 服务内部指标（Flask）
-    - 合作伙伴 HTTP 调用指标（Requests）
+    - 合作商 HTTP 调用指标（Requests）
     - 消息队列消费指标（Consumer）
 - ✅ Prometheus 原生集成
 - ✅ 灵活的指标桶配置
 - ✅ 自动化的指标收集
-- ✅ 合作伙伴接口预配置
+- ✅ 合作商接口预配置
 
 ## 安装使用
 
@@ -35,11 +35,9 @@ pip install channel_exporter
 ### 快速开始（Web 服务指标）
 
 ```python
+# coding:utf-8
 import channel_exporter
 from flask import Flask
-
-# 初始化监控配置
-channel_exporter.__init__("<your_syscode>")
 
 app = Flask(__name__)
 
@@ -49,8 +47,11 @@ def hello():
     return "Hello World!"
 
 
-# 启动后访问 /metrics 获取指标
 if __name__ == "__main__":
+    # 初始化监控配置
+    channel_exporter.__init__("<your_syscode>")
+
+    # 启动后访问 /metrics 获取指标
     app.run()
 ```
 

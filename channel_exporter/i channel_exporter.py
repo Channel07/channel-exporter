@@ -287,7 +287,6 @@ class DictGet(dict):
 
 
 xx = {
-    # ────────────────────────优图────────────────────────
     'd002.youtu.realname.dzqd.cn:38087': {
         'partner': 1,
         'paths': {
@@ -336,8 +335,6 @@ xx = {
             '/txcFaceid/h5/getToken_new': 812
         }
     },
-
-    # ────────────────────────国政通────────────────────────
     'd004.gzt.realname.dzqd.cn:8085': {
         'partner': 2,
         'paths': {
@@ -358,19 +355,12 @@ xx = {
             '/ocr/face/p2/decrypt/verify/images': 406
         }
     },
-    # '10.130.219.71:30702': {
-    #     'partner': 2,
-    #     'paths': {
-    #         '/bllweb/identity/verify': ''
-    #     }
-    # },
     'd002.gzt.realname.dzqd.cn:9901': {
         'partner': 2,
         'paths': {
             '/xpcompare': 408
         }
     },
-    # ────────────────────────企信────────────────────────
     '10.128.86.64:8000': {
         'partner': '',
         'paths': {
@@ -386,7 +376,6 @@ xx = {
             '/serviceAgent/rest/fjcrm/post/core/server/checkIdCardBase': ''
         }
     },
-    # ────────────────────────福富（公安一所）────────────────────────
     '10.130.219.34:10002': {
         'partner': '',
         'paths': {
@@ -403,7 +392,6 @@ xx['172.16.50.35:9998'] = xx['d110.youtu.realname.dzqd.cn:9998']
 xx['172.16.50.35:9999'] = xx['10.148.247.1:9999']
 xx['172.16.50.35:28080'] = xx['d004.gzt.realname.dzqd.cn:8085']
 xx['172.16.5.9:8083'] = xx['d005.gzt.realname.dzqd.cn:8083']
-# xx['172.16.20.53:30702'] = xx['10.130.219.71:30702']
 xx['172.16.50.35:9006']['paths'].update(xx['10.128.86.64:8000']['paths'])
 xx['172.16.50.35:9006']['paths'].update(xx['10.130.219.20:31789']['paths'])
 xx['172.16.50.35:9006']['paths'].update(xx['10.130.219.34:10002']['paths'])
