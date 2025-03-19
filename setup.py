@@ -8,7 +8,7 @@ if sys.version_info.major < 3:
 
 setuptools.setup(
     name='channel-exporter',
-    version='1.0.3',
+    version='1.0.4',
     author='Unnamed great master',
     author_email='<gqylpy@outlook.com>',
     license='MIT',

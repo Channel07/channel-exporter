@@ -5,6 +5,7 @@ import sys
 import time
 import json
 import functools
+import traceback
 import threading
 
 from datetime import datetime
@@ -31,7 +32,6 @@ else:
             self.before_request(inner_metrics_before)
             self.after_request(inner_metrics)
             self.route('/metrics', methods=['GET'])(metrics)
-        inner.__wrapped__ = func
         return inner
 
     def wrap_flask_run_method(func):
@@ -39,7 +39,6 @@ else:
         def inner(*a, **kw):
             func(*a, **kw)
             Flask.__running__ = True
-        inner.__wrapped__ = func
         return inner
 
     Flask.__init__ = wrap_flask_init_method(Flask.__init__)
@@ -149,64 +148,76 @@ def start_prometheus_metrics_server(port):
 
 
 def inner_metrics_before():
-    if request.path in ('/healthcheck', '/metrics') \
-            or not hasattr(this, 'syscode'):
-        return
+    try:
+        if request.path in ('/healthcheck', '/metrics') \
+                or not hasattr(this, 'syscode'):
+            return
 
-    if not hasattr(g, '__request_time__'):
-        g.__request_time__ = datetime.now()
+        if not hasattr(g, '__request_time__'):
+            g.__request_time__ = datetime.now()
 
-    if not hasattr(g, '__request_headers__'):
-        g.__request_headers__ = dict(request.headers)
+        if not hasattr(g, '__request_headers__'):
+            g.__request_headers__ = dict(request.headers)
 
-    if not hasattr(g, '__request_data__'):
-        if request.args:
-            request_data = request.args.to_dict()
-        elif request.form:
-            request_data = request.form.to_dict()
-        else:
-            request_body = request.data
-            try:
-                request_data = json.loads(request_body) \
-                    if request_body else None
-            except ValueError:
-                request_data = None
-        g.__request_data__ = request_data
+        if not hasattr(g, '__request_data__'):
+            if request.args:
+                request_data = request.args.to_dict()
+            elif request.form:
+                request_data = request.form.to_dict()
+            else:
+                request_body = request.data
+                try:
+                    request_data = json.loads(request_body) \
+                        if request_body else None
+                except ValueError:
+                    request_data = None
+            g.__request_data__ = request_data
+    except Exception:
+        sys.stderr.write(
+            traceback.format_exc() + '\nAn exception occurred while '
+            'recording the metrics.'
+        )
 
 
 def inner_metrics(response):
-    if request.path in ('/healthcheck', '/metrics') \
-            or not hasattr(this, 'syscode'):
-        return response
-
-    f_code = FuzzyGet(g.__request_headers__, 'User-Agent').v
-
-    if is_char(f_code) and len(f_code) > 20:
-        f_code = f_code[:20] + '...'
-
-    method_code = (
-        getattr(request, 'method_code', None)
-        or FuzzyGet(g.__request_headers__, 'Method-Code').v
-        or FuzzyGet(g.__request_data__, 'method_code').v
-    )
     try:
-        response_data = json.loads(response.get_data())
-    except ValueError:
-        code = -1
-    else:
-        code = FuzzyGet(response_data, 'code').v
+        if request.path in ('/healthcheck', '/metrics') \
+                or not hasattr(this, 'syscode'):
+            return response
 
-    this.metrics_inner.labels(
-        appid=this.appid,
-        application=this.syscode,
-        f_code=f_code,
-        path=request.path,
-        http_status=response.status_code,
-        code=code or '',
-        method_code=method_code or ''
-    ).observe((datetime.now() - g.__request_time__).total_seconds() * 1000)
+        f_code = FuzzyGet(g.__request_headers__, 'User-Agent').v
 
-    return response
+        if is_char(f_code) and len(f_code) > 20:
+            f_code = f_code[:20] + '...'
+
+        method_code = (
+            getattr(request, 'method_code', None)
+            or FuzzyGet(g.__request_headers__, 'Method-Code').v
+            or FuzzyGet(g.__request_data__, 'method_code').v
+        )
+        try:
+            response_data = json.loads(response.get_data())
+        except ValueError:
+            code = -1
+        else:
+            code = FuzzyGet(response_data, 'code').v
+
+        this.metrics_inner.labels(
+            appid=this.appid,
+            application=this.syscode,
+            f_code=f_code,
+            path=request.path,
+            http_status=response.status_code,
+            code=code or '',
+            method_code=method_code or ''
+        ).observe((datetime.now() - g.__request_time__).total_seconds() * 1000)
+    except Exception:
+        sys.stderr.write(
+            traceback.format_exc() + '\nAn exception occurred while '
+            'recording the metrics.'
+        )
+    finally:
+        return response
 
 
 def metrics():
@@ -221,33 +232,39 @@ def partner_http_metrics(func):
         response = func(self, method, url, *a, **kw)
         response_time = datetime.now()
 
-        parsed_url = urlparse(url)
-        config = xx.get(parsed_url.netloc)
-
-        if config is None:
-            return response
-
         try:
-            response_data = response.json()
-        except ValueError:
-            code = -1
-        else:
-            code = (
-                FuzzyGet(response_data, 'code').v
-                or FuzzyGet(response_data, 'errorcode').v
-                or -1
+            parsed_url = urlparse(url)
+            config = xx.get(parsed_url.netloc)
+
+            if config is None:
+                return response
+
+            try:
+                response_data = response.json()
+            except ValueError:
+                code = -1
+            else:
+                code = (
+                    FuzzyGet(response_data, 'code').v
+                    or FuzzyGet(response_data, 'errorcode').v
+                    or -1
+                )
+
+            this.metrics_partner_http.labels(
+                appid=this.appid,
+                application=this.syscode,
+                partner=config['partner'],
+                action_code=config['paths'].get(parsed_url.path, ''),
+                http_status=response.status_code,
+                code=code
+            ).observe((response_time - request_time).total_seconds() * 1000)
+        except Exception:
+            sys.stderr.write(
+                traceback.format_exc() + '\nAn exception occurred while '
+                'recording the metrics.'
             )
-
-        this.metrics_partner_http.labels(
-            appid=this.appid,
-            application=this.syscode,
-            partner=config['partner'],
-            action_code=config['paths'].get(parsed_url.path, ''),
-            http_status=response.status_code,
-            code=code
-        ).observe((response_time - request_time).total_seconds() * 1000)
-
-        return response
+        finally:
+            return response
 
     inner.__wrapped__ = func
     return inner
