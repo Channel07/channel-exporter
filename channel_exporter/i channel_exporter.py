@@ -23,19 +23,27 @@ else:
     from flask import g
     from flask import request
     from flask import Response
-    from flask import current_app
-    from flask import has_request_context
 
-    if not hasattr(Flask, '__apps__'):
-        def wrap_flask_init_method(func):
-            @functools.wraps(func)
-            def inner(self, *a, **kw):
-                func(self, *a, **kw)
-                Flask.__apps__.append(self)
-            return inner
+    def wrap_flask_init_method(func):
+        @functools.wraps(func)
+        def inner(self, *a, **kw):
+            func(self, *a, **kw)
+            self.before_request(inner_metrics_before)
+            self.after_request(inner_metrics)
+            self.route('/metrics', methods=['GET'])(metrics)
+        inner.__wrapped__ = func
+        return inner
 
-        Flask.__apps__ = []
-        Flask.__init__ = wrap_flask_init_method(Flask.__init__)
+    def wrap_flask_run_method(func):
+        @functools.wraps(func)
+        def inner(*a, **kw):
+            func(*a, **kw)
+            Flask.__running__ = True
+        inner.__wrapped__ = func
+        return inner
+
+    Flask.__init__ = wrap_flask_init_method(Flask.__init__)
+    Flask.run = wrap_flask_run_method(Flask.run)
 
 try:
     import requests
@@ -52,13 +60,15 @@ else:
         def inner(self, worker):
             worker = consumer_metrics(worker, topic=self.queue)
             func(self, worker)
+        inner.__wrapped__ = func
         return inner
 
 if sys.version_info.major < 3:
     from urlparse import urlparse
+    is_char = lambda x: isinstance(x, (str, unicode))
 else:
     from urllib.parse import urlparse
-    unicode = str
+    is_char = lambda x: isinstance(x, str)
 
 co_qualname = 'co_qualname' if sys.version_info >= (3, 11) else 'co_name'
 
@@ -77,14 +87,13 @@ def __init__(
         default_metrics_port=9166,
 ):
     if hasattr(this, 'syscode'):
-        raise RuntimeError('repeat initialization.')
+        return
 
     if re.match(r'[a-zA-Z]\d{9}$', syscode) is None:
         raise ValueError('parameter syscode "%s" is illegal.' % syscode)
 
     this.syscode = syscode = syscode.upper()
     this.appid = syscode[:4]
-    this.default_metrics_port = default_metrics_port
 
     if Flask is not None:
         this.metrics_inner = Histogram(
@@ -96,12 +105,10 @@ def __init__(
             ),
             buckets=inner_metrics_buckets
         )
-        thread = threading.Thread(target=register_flask_metrics)
-        thread.name = 'RegisterFlaskMetrics'
-        thread.daemon = True
-        thread.start()
 
     if requests is not None:
+        requests.Session.request = \
+            partner_http_metrics(requests.Session.request)
         this.metrics_partner_http = Histogram(
             name='partner_http_metrics',
             documentation='...',
@@ -111,41 +118,39 @@ def __init__(
             ),
             buckets=partner_http_metrics_buckets
         )
-        requests.Session.request = \
-            partner_http_metrics(requests.Session.request)
 
     if Consumer is not None:
+        Consumer.register_worker = \
+            wrap_register_worker(Consumer.register_worker)
         this.metrics_consumer = Histogram(
             name=this.syscode + '_consumer_metrics',
             documentation='...',
             labelnames=('appid', 'application', 'f_code', 'topic', 'code'),
             buckets=consumer_metrics_buckets
         )
-        Consumer.register_worker = \
-            wrap_register_worker(Consumer.register_worker)
 
-    if Flask is None and (requests is not None or Consumer is not None):
-        start_http_server(default_metrics_port)
+    thread = threading.Thread(
+        target=start_prometheus_metrics_server,
+        args=(default_metrics_port,)
+    )
+    thread.name = 'StartPrometheusMetricsServer'
+    thread.daemon = True
+    thread.start()
 
 
-def register_flask_metrics():
-    start = time.time()
-
-    while not Flask.__apps__ and time.time() - start < 60:
-        time.sleep(.01)
-
-    if not Flask.__apps__:
-        start_http_server(this.default_metrics_port)
-        return
-
-    for app in Flask.__apps__:
-        app.before_request(inner_metrics_before)
-        app.after_request(inner_metrics)
-        app.route('/metrics', methods=['GET'])(metrics)
+def start_prometheus_metrics_server(port):
+    if Flask is not None:
+        start = time.time()
+        while time.time() - start < 40:
+            if hasattr(Flask, '__running__'):
+                return
+            time.sleep(.01)
+    start_http_server(port)
 
 
 def inner_metrics_before():
-    if request.path in ('/healthcheck', '/metrics'):
+    if request.path in ('/healthcheck', '/metrics') \
+            or not hasattr(this, 'syscode'):
         return
 
     if not hasattr(g, '__request_time__'):
@@ -170,25 +175,26 @@ def inner_metrics_before():
 
 
 def inner_metrics(response):
-    if request.path in ('/healthcheck', '/metrics'):
+    if request.path in ('/healthcheck', '/metrics') \
+            or not hasattr(this, 'syscode'):
         return response
 
-    f_code = DictGet(g.__request_headers__, 'User-Agent').result
+    f_code = FuzzyGet(g.__request_headers__, 'User-Agent').v
 
-    if isinstance(f_code, (str, unicode)) and len(f_code) > 20:
+    if is_char(f_code) and len(f_code) > 20:
         f_code = f_code[:20] + '...'
 
     method_code = (
-        getattr(request, 'method_code', None) or
-        DictGet(g.__request_headers__, 'Method-Code').result or
-        DictGet(g.__request_data__, 'method_code').result
+        getattr(request, 'method_code', None)
+        or FuzzyGet(g.__request_headers__, 'Method-Code').v
+        or FuzzyGet(g.__request_data__, 'method_code').v
     )
     try:
         response_data = json.loads(response.get_data())
     except ValueError:
         code = -1
     else:
-        code = DictGet(response_data, 'code').result
+        code = FuzzyGet(response_data, 'code').v
 
     this.metrics_inner.labels(
         appid=this.appid,
@@ -226,7 +232,11 @@ def partner_http_metrics(func):
         except ValueError:
             code = -1
         else:
-            code = DictGet(response_data, 'code').result or -1
+            code = (
+                FuzzyGet(response_data, 'code').v
+                or FuzzyGet(response_data, 'errorcode').v
+                or -1
+            )
 
         this.metrics_partner_http.labels(
             appid=this.appid,
@@ -250,8 +260,6 @@ def consumer_metrics(func, topic):
         start_time = datetime.now()
         try:
             r = func(*a, **kw)
-        except Exception as e:
-            raise e
         finally:
             this.metrics_consumer.labels(
                 appid=this.appid,
@@ -265,8 +273,8 @@ def consumer_metrics(func, topic):
     return inner
 
 
-class DictGet(dict):
-    result = None
+class FuzzyGet(dict):
+    v = None
 
     def __init__(self, data, key, root=None):
         if root is None:
@@ -274,9 +282,9 @@ class DictGet(dict):
             root = self
         for k, v in data.items():
             if k.replace('-', '').replace('_', '').lower() == root.key:
-                root.result = data[k]
+                root.v = data[k]
                 break
-            dict.__setitem__(self, k, DictGet(v, key=key, root=root))
+            dict.__setitem__(self, k, FuzzyGet(v, key=key, root=root))
 
     def __new__(cls, data, *a, **kw):
         if isinstance(data, dict):
