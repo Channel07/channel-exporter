@@ -37,8 +37,8 @@ else:
     def wrap_flask_run_method(func):
         @functools.wraps(func)
         def inner(*a, **kw):
-            func(*a, **kw)
             Flask.__running__ = True
+            func(*a, **kw)
         return inner
 
     Flask.__init__ = wrap_flask_init_method(Flask.__init__)
