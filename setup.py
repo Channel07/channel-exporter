@@ -8,7 +8,7 @@ if sys.version_info.major < 3:
 
 setuptools.setup(
     name='channel-exporter',
-    version='1.0.5',
+    version='1.1alpha1',
     author='Unnamed great master',
     author_email='<gqylpy@outlook.com>',
     license='MIT',
@@ -28,6 +28,7 @@ setuptools.setup(
         'flask': ['Flask>=0.10'],
         'requests': ['requests>=2.19'],
         'ctec-consumer': ['ctec-consumer==0.3.7'],
+        'gevent': ['gevent>=1.2.2']
     },
     classifiers=[
         'Development Status :: 3 - Alpha',

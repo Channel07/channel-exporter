@@ -11,10 +11,17 @@ import threading
 from datetime import datetime
 
 if os.path.basename(sys.argv[0]) != 'setup.py':
-    from prometheus_client import Histogram
-    from prometheus_client import generate_latest
-    from prometheus_client import start_http_server
-    from prometheus_client import CONTENT_TYPE_LATEST
+    import prometheus_client
+
+
+def wrap_api_frame_start_method(api_frame, start_method):
+    @functools.wraps(start_method)
+    def inner(*a, **kw):
+        api_frame.__running__ = True
+        start_method(*a, **kw)
+    inner.__wrapped__ = start_method
+    return inner
+
 
 try:
     from flask import Flask
@@ -32,17 +39,18 @@ else:
             self.before_request(inner_metrics_before)
             self.after_request(inner_metrics)
             self.route('/metrics', methods=['GET'])(metrics)
-        return inner
-
-    def wrap_flask_run_method(func):
-        @functools.wraps(func)
-        def inner(*a, **kw):
-            Flask.__running__ = True
-            func(*a, **kw)
+        inner.__wrapped__ = func
         return inner
 
     Flask.__init__ = wrap_flask_init_method(Flask.__init__)
-    Flask.run = wrap_flask_run_method(Flask.run)
+    Flask.run = wrap_api_frame_start_method(Flask, Flask.run)
+
+try:
+    from gevent.baseserver import BaseServer as WSGIServer
+except ImportError:
+    WSGIServer = None
+else:
+    WSGIServer.serve_forever = wrap_api_frame_start_method(WSGIServer, WSGIServer.serve_forever)
 
 try:
     import requests
@@ -57,8 +65,7 @@ else:
     def wrap_register_worker(func):
         @functools.wraps(func)
         def inner(self, worker):
-            worker = consumer_metrics(worker, topic=self.queue)
-            func(self, worker)
+            func(self, consumer_metrics(worker, topic=self.queue))
         inner.__wrapped__ = func
         return inner
 
@@ -73,9 +80,7 @@ co_qualname = 'co_qualname' if sys.version_info >= (3, 11) else 'co_name'
 
 this = sys.modules[__name__]
 
-default_buckets = (
-    100, 200, 500, 800, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 8000
-)
+default_buckets = (100, 200, 500, 800, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 8000)
 
 
 def __init__(
@@ -95,62 +100,50 @@ def __init__(
     this.appid = syscode[:4]
 
     if Flask is not None:
-        this.metrics_inner = Histogram(
+        this.metrics_inner = prometheus_client.Histogram(
             name=syscode + '_inner_metrics',
             documentation='...',
-            labelnames=(
-                'appid', 'application', 'f_code', 'path', 'http_status', 'code',
-                'method_code'
-            ),
+            labelnames=('appid', 'application', 'f_code', 'path', 'http_status', 'code', 'method_code'),
             buckets=inner_metrics_buckets
         )
+        thread = threading.Thread(target=start_prometheus_metrics_server, args=(default_metrics_port,))
+        thread.name = 'StartPrometheusMetricsServer'
+        thread.daemon = True
+        thread.start()
+    else:
+        prometheus_client.start_http_server(int(default_metrics_port))
 
     if requests is not None:
-        requests.Session.request = \
-            partner_http_metrics(requests.Session.request)
-        this.metrics_partner_http = Histogram(
+        requests.Session.request = partner_http_metrics(requests.Session.request)
+        this.metrics_partner_http = prometheus_client.Histogram(
             name='partner_http_metrics',
             documentation='...',
-            labelnames=(
-                'appid', 'application', 'partner', 'action_code', 'http_status',
-                'code'
-            ),
+            labelnames=('appid', 'application', 'partner', 'action_code', 'http_status', 'code'),
             buckets=partner_http_metrics_buckets
         )
 
     if Consumer is not None:
-        Consumer.register_worker = \
-            wrap_register_worker(Consumer.register_worker)
-        this.metrics_consumer = Histogram(
+        Consumer.register_worker = wrap_register_worker(Consumer.register_worker)
+        this.metrics_consumer = prometheus_client.Histogram(
             name=this.syscode + '_consumer_metrics',
             documentation='...',
             labelnames=('appid', 'application', 'f_code', 'topic', 'code'),
             buckets=consumer_metrics_buckets
         )
 
-    thread = threading.Thread(
-        target=start_prometheus_metrics_server,
-        args=(default_metrics_port,)
-    )
-    thread.name = 'StartPrometheusMetricsServer'
-    thread.daemon = True
-    thread.start()
-
 
 def start_prometheus_metrics_server(port):
-    if Flask is not None:
-        start = time.time()
-        while time.time() - start < 40:
-            if hasattr(Flask, '__running__'):
-                return
-            time.sleep(.01)
-    start_http_server(port)
+    start = time.time()
+    while time.time() - start < 40:
+        if hasattr(Flask, '__running__') or hasattr(WSGIServer, '__running__'):
+            return
+        time.sleep(.01)
+    prometheus_client.start_http_server(int(port))
 
 
 def inner_metrics_before():
     try:
-        if request.path in ('/healthcheck', '/metrics') \
-                or not hasattr(this, 'syscode'):
+        if request.path in ('/healthcheck', '/metrics') or not hasattr(this, 'syscode'):
             return
 
         if not hasattr(g, '__request_time__'):
@@ -167,8 +160,7 @@ def inner_metrics_before():
             else:
                 request_body = request.data
                 try:
-                    request_data = json.loads(request_body) \
-                        if request_body else None
+                    request_data = json.loads(request_body) if request_body else None
                 except ValueError:
                     request_data = None
             g.__request_data__ = request_data
@@ -181,8 +173,7 @@ def inner_metrics_before():
 
 def inner_metrics(response):
     try:
-        if request.path in ('/healthcheck', '/metrics') \
-                or not hasattr(this, 'syscode'):
+        if request.path in ('/healthcheck', '/metrics') or not hasattr(this, 'syscode'):
             return response
 
         f_code = FuzzyGet(g.__request_headers__, 'User-Agent').v
@@ -221,7 +212,7 @@ def inner_metrics(response):
 
 
 def metrics():
-    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+    return Response(prometheus_client.generate_latest(), mimetype=prometheus_client.CONTENT_TYPE_LATEST)
 
 
 def partner_http_metrics(func):
@@ -234,7 +225,7 @@ def partner_http_metrics(func):
 
         try:
             parsed_url = urlparse(url)
-            config = xx.get(parsed_url.netloc)
+            config = partner_interface_config.get(parsed_url.netloc)
 
             if config is None:
                 return response
@@ -244,11 +235,7 @@ def partner_http_metrics(func):
             except ValueError:
                 code = -1
             else:
-                code = (
-                    FuzzyGet(response_data, 'code').v
-                    or FuzzyGet(response_data, 'errorcode').v
-                    or -1
-                )
+                code = FuzzyGet(response_data, 'code').v or FuzzyGet(response_data, 'errorcode').v or -1
 
             this.metrics_partner_http.labels(
                 appid=this.appid,
@@ -295,6 +282,8 @@ class FuzzyGet(dict):
 
     def __init__(self, data, key, root=None):
         if root is None:
+            if isinstance(data, list):
+                data = {'data': data}
             self.key = key.replace('-', '').replace('_', '').lower()
             root = self
         for k, v in data.items():
@@ -303,15 +292,17 @@ class FuzzyGet(dict):
                 break
             dict.__setitem__(self, k, FuzzyGet(v, key=key, root=root))
 
-    def __new__(cls, data, *a, **kw):
+    def __new__(cls, data, key, root=None):
+        if root is None and isinstance(data, list):
+            data = {'data': data}
         if isinstance(data, dict):
             return dict.__new__(cls)
         if isinstance(data, (list, tuple)):
-            return data.__class__(cls(v, *a, **kw) for v in data)
+            return data.__class__(cls(v, key, root) for v in data)
         return cls
 
 
-xx = {
+partner_interface_config = {
     'd002.youtu.realname.dzqd.cn:38087': {
         'partner': 1,
         'paths': {
@@ -409,14 +400,14 @@ xx = {
         }
     }
 }
-xx['172.16.50.35:9006'] = xx['d002.youtu.realname.dzqd.cn:38087']
-xx['172.16.50.35:39090'] = xx['d110.youtu.realname.dzqd.cn:39090']
-xx['172.16.50.35:9978'] = xx['d110.youtu.realname.dzqd.cn:9978']
-xx['172.16.50.35:9988'] = xx['d110.youtu.realname.dzqd.cn:9988']
-xx['172.16.50.35:9998'] = xx['d110.youtu.realname.dzqd.cn:9998']
-xx['172.16.50.35:9999'] = xx['10.148.247.1:9999']
-xx['172.16.50.35:28080'] = xx['d004.gzt.realname.dzqd.cn:8085']
-xx['172.16.5.9:8083'] = xx['d005.gzt.realname.dzqd.cn:8083']
-xx['172.16.50.35:9006']['paths'].update(xx['10.128.86.64:8000']['paths'])
-xx['172.16.50.35:9006']['paths'].update(xx['10.130.219.20:31789']['paths'])
-xx['172.16.50.35:9006']['paths'].update(xx['10.130.219.34:10002']['paths'])
+partner_interface_config['172.16.50.35:9006'] = partner_interface_config['d002.youtu.realname.dzqd.cn:38087']
+partner_interface_config['172.16.50.35:39090'] = partner_interface_config['d110.youtu.realname.dzqd.cn:39090']
+partner_interface_config['172.16.50.35:9978'] = partner_interface_config['d110.youtu.realname.dzqd.cn:9978']
+partner_interface_config['172.16.50.35:9988'] = partner_interface_config['d110.youtu.realname.dzqd.cn:9988']
+partner_interface_config['172.16.50.35:9998'] = partner_interface_config['d110.youtu.realname.dzqd.cn:9998']
+partner_interface_config['172.16.50.35:9999'] = partner_interface_config['10.148.247.1:9999']
+partner_interface_config['172.16.50.35:28080'] = partner_interface_config['d004.gzt.realname.dzqd.cn:8085']
+partner_interface_config['172.16.5.9:8083'] = partner_interface_config['d005.gzt.realname.dzqd.cn:8083']
+partner_interface_config['172.16.50.35:9006']['paths'].update(partner_interface_config['10.128.86.64:8000']['paths'])
+partner_interface_config['172.16.50.35:9006']['paths'].update(partner_interface_config['10.130.219.20:31789']['paths'])
+partner_interface_config['172.16.50.35:9006']['paths'].update(partner_interface_config['10.130.219.34:10002']['paths'])
