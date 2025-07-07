@@ -192,6 +192,8 @@ def inner_metrics(response):
             code = -1
         else:
             code = FuzzyGet(response_data, 'code').v
+            if code is None:
+                code = ''
 
         this.metrics_inner.labels(
             appid=this.appid,
@@ -199,7 +201,7 @@ def inner_metrics(response):
             f_code=f_code,
             path=request.path,
             http_status=response.status_code,
-            code=code or '',
+            code=code,
             method_code=method_code or ''
         ).observe((datetime.now() - g.__request_time__).total_seconds() * 1000)
     except Exception:

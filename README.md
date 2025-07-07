@@ -1,7 +1,7 @@
 # channel-exporter
 
-[![Release](https://img.shields.io/github/release/2018-11-27/channel-exporter.svg?style=flat-square")](https://github.com/2018-11-27/channel-exporter/releases/latest)
-[![Python Version](https://img.shields.io/badge/python-2.7+/3.6+-blue.svg)](https://github.com/2018-11-27/channel-exporter)
+[![Release](https://img.shields.io/github/release/channel07/channel-exporter.svg?style=flat-square")](https://github.com/channel07/channel-exporter/releases/latest)
+[![Python Version](https://img.shields.io/badge/python-2.7+/3.6+-blue.svg)](https://github.com/channel07/channel-exporter)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Downloads](https://pepy.tech/badge/channel-exporter)](https://pepy.tech/project/channel-exporter)
 
