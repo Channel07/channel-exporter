@@ -173,7 +173,11 @@ def inner_metrics_before():
 
 def inner_metrics(response):
     try:
-        if request.path in ('/healthcheck', '/metrics') or not hasattr(this, 'syscode'):
+        if (
+                response.status_code == 404
+                or request.path in ('/healthcheck', '/metrics')
+                or not hasattr(this, 'syscode')
+        ):
             return response
 
         f_code = FuzzyGet(g.__request_headers__, 'User-Agent').v
