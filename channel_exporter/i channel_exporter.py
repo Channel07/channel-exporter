@@ -241,7 +241,11 @@ def partner_http_metrics(func):
             except ValueError:
                 code = -1
             else:
-                code = FuzzyGet(response_data, 'code').v or FuzzyGet(response_data, 'errorcode').v or -1
+                code = FuzzyGet(response_data, 'code').v
+                if code is None:
+                    code = FuzzyGet(response_data, 'errorcode').v
+                    if code is None:
+                        code = -1
 
             this.metrics_partner_http.labels(
                 appid=this.appid,
