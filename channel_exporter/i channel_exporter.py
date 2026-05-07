@@ -115,7 +115,7 @@ def __init__(
         this.metrics_inner = prometheus_client.Histogram(
             name=syscode + '_inner_metrics',
             documentation='...',
-            labelnames=('appid', 'application', 'f_code', 'path', 'http_status', 'code', 'method_code'),
+            labelnames=('appid', 'application', 'f_code', 'path', 'uri', 'http_status', 'code', 'method_code'),
             buckets=inner_metrics_buckets
         )
         thread = threading.Thread(target=start_prometheus_metrics_server, args=(default_metrics_port,))
@@ -227,6 +227,7 @@ def inner_metrics(response):
             application=this.syscode,
             f_code=f_code,
             path=request.path,
+            uri=request.path,
             http_status=response.status_code,
             code=code,
             method_code=method_code or ''
